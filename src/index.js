@@ -1,6 +1,8 @@
-/*
- * Copyright (c) 2015 Nanchao Inc. All rights reserved.
+/*!
+ * Copyright (c) 2016 Nanchao Inc.
+ * All rights reserved.
  */
+
 'use strict';
 
 var EventEmitter = require('events');
@@ -174,10 +176,9 @@ module.exports = driver({
 
         this.reset();
 
-        var ioConData = 0x40; // 0b01000000
-
-        this._i2c.writeByte(IOCON_A, ioConData);
-        this._i2c.writeByte(IOCON_B, ioConData);
+        // IOCON mirror (0b01000000).
+        this._i2c.writeByte(IOCON_A, 0x40);
+        this._i2c.writeByte(IOCON_B, 0x40);
 
         this._gpio.on('interrupt', this._oninterrupt.bind(this));
     },
