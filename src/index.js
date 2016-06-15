@@ -87,65 +87,126 @@ var OUTPUT_INDEX_MAP = {
     'io-15': 15
 };
 
-function I2cGpioInterface(device, index, options) {
+function I2cGpioInterface(device, index, options, callback) {
     EventEmitter.call(this);
+
+    var that = this;
 
     this._device = device;
     this._index = index;
 
     this._activeLow = !!options.activeLow;
-    this.setDirection(options.direction || Direction.in);
 
-    if (this._direction === Direction.in) {
-        this.setEdge(options.edge || Edge.none);
-    }
+    this.setDirection(options.direction || Direction.in, function (error) {
+        if (error) {
+            callback(error);
+            return;
+        }
+
+        if (that._direction !== Direction.in) {
+            callback(undefined, that);
+            return;
+        }
+
+        that.setEdge(options.edge || Edge.none, function (error) {
+            if (error) {
+                callback(error);
+                return;
+            }
+
+            callback(undefined, that);
+        });
+    });
 }
 
 util.inherits(I2cGpioInterface, EventEmitter);
 
 /**
  * @param {boolean} activeLow
+ * @param {Function} [callback]
  */
-I2cGpioInterface.prototype.setActiveLow = function (activeLow) {
+I2cGpioInterface.prototype.setActiveLow = function (activeLow, callback) {
     this._activeLow = activeLow;
+    invokeCallback(callback);
 };
 
-I2cGpioInterface.prototype.getActiveLow = function () {
-    return this._activeLow;
+/**
+ * @param {Function} callback
+ */
+I2cGpioInterface.prototype.getActiveLow = function (callback) {
+    assertCallback(callback);
+    invokeCallback(callback, undefined, this._activeLow);
 };
 
-I2cGpioInterface.prototype.setDirection = function (direction, level) {
+/**
+ * @param {Direction} direction
+ * @param {Level} level
+ * @param {Function} [callback]
+ */
+I2cGpioInterface.prototype.setDirection = function (direction, level, callback) {
+    var that = this;
+
+    if (typeof level === 'function') {
+        callback = level;
+        level = undefined;
+    }
+
     if (typeof direction === 'string') {
         direction = DIRECTION_MAP[direction];
     }
 
     if (direction === Direction.in) {
-        this._device.setDirection(this._index, direction);
-        this._direction = direction;
+        this._device.setDirection(this._index, direction, function (error) {
+            if (error) {
+                invokeCallback(callback, error);
+                return;
+            }
+
+            that._direction = direction;
+
+            invokeCallback(callback);
+        });
     } else {
         if (direction !== Direction.out) {
             level = direction === DIRECTION_OUT_LEVEL_LOW ? Level.low : Level.high;
             direction = Direction.out;
         }
 
-        this._device.setDirection(this._index, direction);
-        this._direction = direction;
-
         if (typeof level === 'string') {
             level = LEVEL_MAP[level];
         }
 
-        if (typeof level === 'number') {
-            this._device.write(level ^ this._activeLow);
-        }
+        this._device.setDirection(this._index, direction, function (error) {
+            if (error) {
+                invokeCallback(callback, error);
+                return;
+            }
+
+            that._direction = direction;
+
+            if (typeof level !== 'number') {
+                invokeCallback(callback);
+                return;
+            }
+
+            this._device.write(level ^ this._activeLow, callback);
+        });
     }
 };
 
-I2cGpioInterface.prototype.getEdge = function () {
-    return this._edge;
+/**
+ * @param {Function} callback
+ */
+I2cGpioInterface.prototype.getEdge = function (callback) {
+    assertCallback(callback);
+    invokeCallback(callback, undefined, this._edge);
 };
 
-I2cGpioInterface.prototype.setEdge = function (edge) {
+/**
+ * @param {Edge} edge
+ * @param {Function} [callback]
+ */
+I2cGpioInterface.prototype.setEdge = function (edge, callback) {
     if (typeof edge === 'string') {
         edge = Edge[edge];
     }
@@ -154,84 +215,133 @@ I2cGpioInterface.prototype.setEdge = function (edge) {
         throw new TypeError('Invalid edge value');
     }
 
-    this._device.setEdge(this._index, edge);
-    this._edge = edge;
+    var that = this;
+
+    this._device.setEdge(this._index, edge, function (error) {
+        if (error) {
+            invokeCallback(error, callback);
+            return;
+        }
+
+        that._edge = edge;
+
+        invokeCallback(callback);
+    });
 };
 
-I2cGpioInterface.prototype.read = function () {
-    return this._device.read(this._index) ^ this._activeLow;
+/**
+ * @param {Function} callback
+ */
+I2cGpioInterface.prototype.read = function (callback) {
+    var readCallback = callback && function (error, value) {
+        if (error) {
+            callback(error);
+            return;
+        }
+
+        callback(undefined, value ^ this._activeLow);
+    };
+
+    this._device.read(this._index, readCallback);
 };
 
-I2cGpioInterface.prototype.write = function (value) {
-    value ^= this._activeLow;
-    this._device.write(this._index, value);
+/**
+ * @param {number} value 0 or 1
+ * @param {Function} [callback]
+ */
+I2cGpioInterface.prototype.write = function (value, callback) {
+    this._device.write(this._index, value ^ this._activeLow, callback);
+};
+
+I2cGpioInterface.get = function (device, index, options, callback) {
+    new I2cGpioInterface(device, index, options, callback);
 };
 
 module.exports = driver({
-    attach: function (inputs) {
+    attach: function (inputs, context, next) {
         this._interfaces = [];
 
         this._gpio = inputs['gpio'];
         this._i2c = inputs['i2c'];
 
+        this._gpio.on('interrupt', this._oninterrupt.bind(this));
+
         this.reset();
 
         // IOCON mirror (0b01000000).
         this._i2c.writeByte(IOCON_A, 0x40);
-        this._i2c.writeByte(IOCON_B, 0x40);
-
-        this._gpio.on('interrupt', this._oninterrupt.bind(this));
+        this._i2c.writeByte(IOCON_B, 0x40, function () {
+            next();
+        });
     },
     detach: function () {
         this.reset();
     },
-    getInterface: function (name, options) {
+    getInterface: function (name, options, callback) {
         if (!hasOwnProperty.call(OUTPUT_INDEX_MAP, name)) {
             throw new Error('Invalid interface name "' + name + '"');
         }
+
+        assertCallback(callback);
 
         var index = OUTPUT_INDEX_MAP[name];
 
         var interfaces = this._interfaces;
 
         if (index in interfaces) {
-            return interfaces[index];
+            invokeCallback(callback, undefined, interfaces[index]);
+        } else {
+            I2cGpioInterface.get(this, index, options, function (error, gpioInterface) {
+                if (error) {
+                    callback(error);
+                    return;
+                }
+
+                interfaces[index] = gpioInterface;
+                callback(undefined, gpioInterface);
+            });
         }
-
-        var gpioInterface = new I2cGpioInterface(this, index, options);
-
-        interfaces[index] = gpioInterface;
-
-        this._interfaces = interfaces;
-
-        return gpioInterface;
     },
     exports: {
         _oninterrupt: function () {
-            var interruptionBits = (this._i2c.readByte(INTF_B) << 8) | this._i2c.readByte(INTF_A);
-            var valueBits = (this._i2c.readByte(INTCAP_B) << 8) | this._i2c.readByte(INTCAP_A);
-
+            var i2c = this._i2c;
             var gpios = this._interfaces;
 
-            for (var i = 0; i < gpios.length; i++) {
-                if (interruptionBits & (1 << i) && i in gpios) {
-                    var gpio = gpios[i];
-                    var value = (valueBits >> i) & 1;
-                    var edge = gpio.getEdge();
-
-                    if (
-                        value && edge === Edge.falling ||
-                        !value && edge === Edge.rising
-                    ) {
-                        continue;
-                    }
-
-                    gpio.emit('interrupt', value);
+            series([
+                i2c.readByte.bind(i2c, INTF_A),
+                i2c.readByte.bind(i2c, INTF_B),
+                i2c.readByte.bind(i2c, INTCAP_A),
+                i2c.readByte.bind(i2c, INTCAP_B)
+            ], function (error, values) {
+                if (error) {
+                    return;
                 }
-            }
+
+                var interruptionBits = values[0] | values[1] << 8;
+                var valueBits = values[2] | values[3] << 8;
+
+                for (var i = 0; i < gpios.length; i++) {
+                    if (interruptionBits & (1 << i) && i in gpios) {
+                        var gpio = gpios[i];
+                        var value = (valueBits >> i) & 1;
+                        var edge = gpio._edge;
+
+                        if (
+                            value && edge === Edge.falling ||
+                            !value && edge === Edge.rising
+                        ) {
+                            continue;
+                        }
+
+                        gpio.emit('interrupt', value);
+                    }
+                }
+            });
         },
-        // reset all pins to output and pull them down.
-        reset: function () {
+        /**
+         * @param {Function} [callback]
+         */
+        reset: function (callback) {
             this._dataA = 0x00;
             this._dataB = 0x00;
 
@@ -253,9 +363,14 @@ module.exports = driver({
             i2c.writeByte(OLAT_B, this._dataB);
 
             i2c.writeByte(INTCON_A, 0x00);
-            i2c.writeByte(INTCON_B, 0x00);
+            i2c.writeByte(INTCON_B, 0x00, callback);
         },
-        write: function (index, value) {
+        /**
+         * @param {number} index
+         * @param {number} value 0 or 1
+         * @param {Function} [callback]
+         */
+        write: function (index, value, callback) {
             var dataKey;
             var address;
 
@@ -275,17 +390,32 @@ module.exports = driver({
                 this[dataKey] &= ~(1 << index);
             }
 
-            this._i2c.writeByte(address, this[dataKey]);
+            this._i2c.writeByte(address, this[dataKey], callback);
         },
-        read: function (index) {
+        /**
+         * @param {number} index
+         * @param {Function} callback
+         */
+        read: function (index, callback) {
+            var readCallback = callback && function (error, value) {
+                if (error) {
+                    callback(error);
+                    return;
+                }
+
+                callback(undefined, value >> index % 8 & 1);
+            };
+
             var offset = index < 8 ? GPIO_A : GPIO_B;
-            return this._i2c.readByte(offset) >> index % 8 & 1;
+
+            this._i2c.readByte(offset, readCallback);
         },
         /**
          * @param {number} index
          * @param {Direction} direction
+         * @param {Function} [callback]
          */
-        setDirection: function (index, direction) {
+        setDirection: function (index, direction, callback) {
             var dataKey;
             var address;
 
@@ -307,9 +437,14 @@ module.exports = driver({
                 this[dataKey] |= 1 << index;
             }
 
-            this._i2c.writeByte(address, this[dataKey]);
+            this._i2c.writeByte(address, this[dataKey], callback);
         },
-        setEdge: function (index, edge) {
+        /**
+         * @param {number} index
+         * @param {Edge} edge
+         * @param {Function} callback
+         */
+        setEdge: function (index, edge, callback) {
             var dataKey;
             var address;
 
@@ -329,7 +464,52 @@ module.exports = driver({
                 this[dataKey] |= 1 << index;
             }
 
-            this._i2c.writeByte(address, this[dataKey]);
+            this._i2c.writeByte(address, this[dataKey], callback);
         }
     }
 });
+
+function assertCallback(callback) {
+    if (typeof callback !== 'function') {
+        throw new TypeError('The `callback` is expected to be a function');
+    }
+}
+
+function invokeCallback(callback, error, value, sync) {
+    if (typeof callback !== 'function') {
+        return;
+    }
+
+    if (sync) {
+        callback(error, value);
+    } else {
+        setImmediate(callback, error, value);
+    }
+}
+
+function series(tasks, callback) {
+    var values;
+
+    next();
+
+    function next(error, value) {
+        if (error) {
+            callback(error);
+            return;
+        }
+
+        if (values) {
+            values.push(value);
+        } else {
+            values = [];
+        }
+
+        var task = tasks.shift();
+
+        if (task) {
+            task(next);
+        } else {
+            callback(undefined, values);
+        }
+    }
+}
