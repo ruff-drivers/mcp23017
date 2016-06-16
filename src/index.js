@@ -155,18 +155,7 @@ I2cGpioInterface.prototype.setDirection = function (direction, level, callback) 
         direction = DIRECTION_MAP[direction];
     }
 
-    if (direction === Direction.in) {
-        this._device.setDirection(this._index, direction, function (error) {
-            if (error) {
-                invokeCallback(callback, error);
-                return;
-            }
-
-            that._direction = direction;
-
-            invokeCallback(callback);
-        });
-    } else {
+    if (direction !== Direction.in) {
         if (direction !== Direction.out) {
             level = direction === DIRECTION_OUT_LEVEL_LOW ? Level.low : Level.high;
             direction = Direction.out;
@@ -175,23 +164,25 @@ I2cGpioInterface.prototype.setDirection = function (direction, level, callback) 
         if (typeof level === 'string') {
             level = LEVEL_MAP[level];
         }
-
-        this._device.setDirection(this._index, direction, function (error) {
-            if (error) {
-                invokeCallback(callback, error);
-                return;
-            }
-
-            that._direction = direction;
-
-            if (typeof level !== 'number') {
-                invokeCallback(callback);
-                return;
-            }
-
-            this._device.write(level ^ this._activeLow, callback);
-        });
+    } else if (level !== undefined) {
+        level = undefined;
     }
+
+    this._device.setDirection(this._index, direction, function (error) {
+        if (error) {
+            invokeCallback(callback, error, undefined, true);
+            return;
+        }
+
+        that._direction = direction;
+
+        if (typeof level !== 'number') {
+            invokeCallback(callback, undefined, undefined, true);
+            return;
+        }
+
+        this._device.write(level ^ this._activeLow, callback);
+    });
 };
 
 /**
