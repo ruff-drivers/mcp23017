@@ -265,8 +265,8 @@ module.exports = driver({
             next();
         });
     },
-    detach: function () {
-        this.reset();
+    detach: function (callback) {
+        this.reset(callback);
     },
     getInterface: function (name, options, callback) {
         if (!hasOwnProperty.call(OUTPUT_INDEX_MAP, name)) {
