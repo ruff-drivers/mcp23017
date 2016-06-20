@@ -6,6 +6,7 @@
 'use strict';
 
 var EventEmitter = require('events');
+var async = require('ruff-async');
 var driver = require('ruff-driver');
 var gpio = require('gpio');
 var util = require('util');
@@ -127,15 +128,15 @@ util.inherits(I2cGpioInterface, EventEmitter);
  */
 I2cGpioInterface.prototype.setActiveLow = function (activeLow, callback) {
     this._activeLow = activeLow;
-    invokeCallback(callback);
+    util.invokeCallbackAsync(callback);
 };
 
 /**
  * @param {Function} callback
  */
 I2cGpioInterface.prototype.getActiveLow = function (callback) {
-    assertCallback(callback);
-    invokeCallback(callback, undefined, this._activeLow);
+    util.assertCallback(callback);
+    util.invokeCallbackAsync(callback, undefined, this._activeLow);
 };
 
 /**
@@ -170,14 +171,14 @@ I2cGpioInterface.prototype.setDirection = function (direction, level, callback) 
 
     this._device.setDirection(this._index, direction, function (error) {
         if (error) {
-            invokeCallback(callback, error, undefined, true);
+            util.invokeCallback(callback, error, undefined, true);
             return;
         }
 
         that._direction = direction;
 
         if (typeof level !== 'number') {
-            invokeCallback(callback, undefined, undefined, true);
+            util.invokeCallback(callback, undefined, undefined, true);
             return;
         }
 
@@ -189,8 +190,8 @@ I2cGpioInterface.prototype.setDirection = function (direction, level, callback) 
  * @param {Function} callback
  */
 I2cGpioInterface.prototype.getEdge = function (callback) {
-    assertCallback(callback);
-    invokeCallback(callback, undefined, this._edge);
+    util.assertCallback(callback);
+    util.invokeCallbackAsync(callback, undefined, this._edge);
 };
 
 /**
@@ -210,13 +211,13 @@ I2cGpioInterface.prototype.setEdge = function (edge, callback) {
 
     this._device.setEdge(this._index, edge, function (error) {
         if (error) {
-            invokeCallback(error, callback);
+            util.invokeCallback(error, callback);
             return;
         }
 
         that._edge = edge;
 
-        invokeCallback(callback);
+        util.invokeCallback(callback);
     });
 };
 
@@ -273,14 +274,14 @@ module.exports = driver({
             throw new Error('Invalid interface name "' + name + '"');
         }
 
-        assertCallback(callback);
+        util.assertCallback(callback);
 
         var index = OUTPUT_INDEX_MAP[name];
 
         var interfaces = this._interfaces;
 
         if (index in interfaces) {
-            invokeCallback(callback, undefined, interfaces[index]);
+            util.invokeCallbackAsync(callback, undefined, interfaces[index]);
         } else {
             I2cGpioInterface.get(this, index, options, function (error, gpioInterface) {
                 if (error) {
@@ -298,7 +299,7 @@ module.exports = driver({
             var i2c = this._i2c;
             var gpios = this._interfaces;
 
-            series([
+            async.series([
                 i2c.readByte.bind(i2c, INTF_A),
                 i2c.readByte.bind(i2c, INTF_B),
                 i2c.readByte.bind(i2c, INTCAP_A),
@@ -459,48 +460,3 @@ module.exports = driver({
         }
     }
 });
-
-function assertCallback(callback) {
-    if (typeof callback !== 'function') {
-        throw new TypeError('The `callback` is expected to be a function');
-    }
-}
-
-function invokeCallback(callback, error, value, sync) {
-    if (typeof callback !== 'function') {
-        return;
-    }
-
-    if (sync) {
-        callback(error, value);
-    } else {
-        setImmediate(callback, error, value);
-    }
-}
-
-function series(tasks, callback) {
-    var values;
-
-    next();
-
-    function next(error, value) {
-        if (error) {
-            callback(error);
-            return;
-        }
-
-        if (values) {
-            values.push(value);
-        } else {
-            values = [];
-        }
-
-        var task = tasks.shift();
-
-        if (task) {
-            task(next);
-        } else {
-            callback(undefined, values);
-        }
-    }
-}
