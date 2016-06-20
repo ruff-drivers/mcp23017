@@ -181,7 +181,7 @@ I2cGpioInterface.prototype.setDirection = function (direction, level, callback) 
             return;
         }
 
-        this._device.write(level ^ this._activeLow, callback);
+        that._device.write(level ^ that._activeLow, callback);
     });
 };
 
