@@ -6,7 +6,7 @@ MCP23017 I2C-GPIO device driver.
 
 ## Supported Engines
 
-* Ruff: 1.2.0
+* Ruff: 1.2 - 1.4
 
 ## Supported Models
 
