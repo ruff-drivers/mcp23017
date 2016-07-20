@@ -18,7 +18,7 @@
     ],
     "main": "src/index.js",
     "engines": {
-        "ruff": "1.2 - 1.4"
+        "ruff": ">=1.2.0 <1.4.0"
     },
     "scripts": {
         "install-sdk": "rvm install --local",
